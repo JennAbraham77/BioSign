@@ -1,8 +1,8 @@
-# gesture_tracking.py
 import cv2
 import mediapipe as mp
 import csv
 import os
+import glob
 
 # Create output folder
 os.makedirs("gesture_data", exist_ok=True)
@@ -21,21 +21,40 @@ mp_draw = mp.solutions.drawing_utils
 user_id = input("Enter your user ID: ")
 gesture_label = input("Enter gesture label (e.g., 0=fist, 1=thumbs_up): ")
 
-# Prepare CSV file
-csv_file = f"gesture_data/user_{user_id}_gesture_{gesture_label}.csv"
-csv_columns = [f"x{i}" for i in range(21)] + [f"y{i}" for i in range(21)] + ["gesture_label"]
+# Define master CSV
+master_csv = "gesture_data/gesture_dataset.csv"
 
-with open(csv_file, mode='w', newline='') as f:
+# Define columns
+csv_columns = ["user_id"] + [f"x{i}" for i in range(21)] + [f"y{i}" for i in range(21)] + ["gesture_label"]
+
+# If master CSV doesn't exist, create it with header
+if not os.path.exists(master_csv):
+    with open(master_csv, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(csv_columns)
+
+# Function to combine old CSVs (if any)
+existing_files = glob.glob(f"gesture_data/user_*_gesture_*.csv")
+for file in existing_files:
+    with open(file, 'r') as f:
+        reader = csv.reader(f)
+        next(reader)  # skip header
+        rows = list(reader)
+    with open(master_csv, 'a', newline='') as f_master:
+        writer = csv.writer(f_master)
+        writer.writerows(rows)
+    os.remove(file)  # optional: remove old file after merging
+
+# Start webcam to collect new data
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("Error: Could not open webcam")
+    exit()
+
+print("Press ESC to exit, collecting landmarks...")
+
+with open(master_csv, mode='a', newline='') as f:
     writer = csv.writer(f)
-    writer.writerow(csv_columns)
-
-    # Start webcam
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open webcam")
-        exit()
-
-    print("Press ESC to exit, collecting landmarks...")
 
     while True:
         success, img = cap.read()
@@ -48,7 +67,7 @@ with open(csv_file, mode='w', newline='') as f:
 
         if result.multi_hand_landmarks:
             hand_landmarks = result.multi_hand_landmarks[0]  # first hand
-            row = []
+            row = [user_id]  # Add user_id as first column
             for lm in hand_landmarks.landmark:
                 row.append(lm.x)
             for lm in hand_landmarks.landmark:
@@ -66,4 +85,4 @@ with open(csv_file, mode='w', newline='') as f:
 
 cap.release()
 cv2.destroyAllWindows()
-print(f"Data saved to {csv_file}")
+print(f"All data saved to {master_csv}")
