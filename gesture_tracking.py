@@ -2,11 +2,10 @@ import cv2
 import mediapipe as mp
 import csv
 import os
+import math
 
-# Create output folder
 os.makedirs("gesture_data", exist_ok=True)
 
-# Initialize MediaPipe
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
@@ -14,17 +13,15 @@ hands = mp_hands.Hands(
     min_detection_confidence=0.7,
     min_tracking_confidence=0.7
 )
+
 mp_draw = mp.solutions.drawing_utils
 
-# User input
-user_id = input("Enter your user ID: ")
+user_id = input("Enter user ID: ")
 gesture_label = input("Enter gesture label: ")
 
-# CSV file
-master_csv = "gesture_data/gesture_dataset.csv"
+csv_file = "gesture_data/gesture_dataset.csv"
 
-# Columns (x,y,z + velocity)
-csv_columns = (
+columns = (
     [f"x{i}" for i in range(21)] +
     [f"y{i}" for i in range(21)] +
     [f"z{i}" for i in range(21)] +
@@ -34,74 +31,105 @@ csv_columns = (
     ["user_id", "gesture_label"]
 )
 
-# Create file if not exists
-if not os.path.exists(master_csv):
-    with open(master_csv, mode='w', newline='') as f:
+if not os.path.exists(csv_file):
+    with open(csv_file, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(csv_columns)
+        writer.writerow(columns)
 
-# Webcam
 cap = cv2.VideoCapture(0)
 
-print("Press ESC to stop...")
+prev_landmarks = None
 
-prev_landmarks = None  # store previous frame
+def normalize_landmarks(landmarks):
+    wrist = landmarks[0]
+    max_distance = 0
 
-with open(master_csv, mode='a', newline='') as f:
+    for x, y, z in landmarks:
+        dist = math.sqrt(
+            (x - wrist[0]) ** 2 +
+            (y - wrist[1]) ** 2 +
+            (z - wrist[2]) ** 2
+        )
+        max_distance = max(max_distance, dist)
+
+    if max_distance == 0:
+        max_distance = 1
+
+    normalized = []
+
+    for x, y, z in landmarks:
+        normalized.append((
+            (x - wrist[0]) / max_distance,
+            (y - wrist[1]) / max_distance,
+            (z - wrist[2]) / max_distance
+        ))
+
+    return normalized
+
+print("Press ESC to stop collecting...")
+
+with open(csv_file, "a", newline="") as f:
     writer = csv.writer(f)
 
     while True:
-        ret, img = cap.read()
+        ret, frame = cap.read()
+
         if not ret:
             break
 
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        result = hands.process(img_rgb)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(rgb)
 
         if result.multi_hand_landmarks:
             hand_landmarks = result.multi_hand_landmarks[0]
 
             current = []
+
             for lm in hand_landmarks.landmark:
                 current.append((lm.x, lm.y, lm.z))
 
+            current = normalize_landmarks(current)
+
             row = []
 
-            # positions
-            for (x, y, z) in current:
+            for x, y, z in current:
                 row.append(x)
-            for (x, y, z) in current:
+
+            for x, y, z in current:
                 row.append(y)
-            for (x, y, z) in current:
+
+            for x, y, z in current:
                 row.append(z)
 
-            # velocities
             if prev_landmarks:
                 for i in range(21):
-                    vx = current[i][0] - prev_landmarks[i][0]
-                    vy = current[i][1] - prev_landmarks[i][1]
-                    vz = current[i][2] - prev_landmarks[i][2]
-                    row.append(vx)
+                    row.append(current[i][0] - prev_landmarks[i][0])
+
                 for i in range(21):
                     row.append(current[i][1] - prev_landmarks[i][1])
+
                 for i in range(21):
                     row.append(current[i][2] - prev_landmarks[i][2])
             else:
-                # first frame → zero velocity
-                row.extend([0]*63)
+                row.extend([0] * 63)
 
-            # labels
             row.append(user_id)
             row.append(gesture_label)
 
-            writer.writerow(row)
+            if len(row) == 128:
+                writer.writerow(row)
+            else:
+                print("Skipped bad row with length:", len(row))
 
             prev_landmarks = current
 
-            # Draw
-            mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            mp_draw.draw_landmarks(
+                frame,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS
+            )
 
-        cv2.imshow("Gesture Tracking", img)
+        cv2.imshow("Gesture Collection", frame)
 
         if cv2.waitKey(1) & 0xFF == 27:
             break
@@ -109,4 +137,4 @@ with open(master_csv, mode='a', newline='') as f:
 cap.release()
 cv2.destroyAllWindows()
 
-print("Dataset saved!")
+print("Dataset collection complete!")
